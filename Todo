@@ -1,0 +1,303 @@
+Transition Matrix — Physics of Motion
+x_new  = x_old + vx
+y_new  = y_old + vy
+w_new  = w_old
+h_new  = h_old
+vx_new = vx_old
+vy_new = vy_old
+Written as matrix multiplication:
+F = | 1  0  0  0  1  0 |
+    | 0  1  0  0  0  1 |
+    | 0  0  1  0  0  0 |
+    | 0  0  0  1  0  0 |
+    | 0  0  0  0  1  0 |
+    | 0  0  0  0  0  1 |
+
+x_new = F × x_old
+Predict Step
+x_pred = F × x_prev
+P_pred = F × P_prev × F_transpose + Q
+
+Where:
+P = uncertainty covariance matrix
+Q = process noise = 1e-4 (how much we trust physics)
+Update Step — Kalman Gain
+y = z - H × x_pred       (innovation = measurement minus prediction)
+S = H × P_pred × H_T + R (innovation covariance)
+K = P_pred × H_T × S^-1  (Kalman gain)
+x = x_pred + K × y       (corrected state)
+P = (I - K × H) × P_pred (corrected uncertainty)
+
+Where:
+z = measurement from CSRT [x, y, w, h]
+H = measurement matrix 4x6
+R = measurement noise = 1e-2
+K = Kalman gain — balances prediction vs measurement
+What Kalman Gain Means Physically
+K close to 0 → trust prediction more
+K close to 1 → trust measurement more
+
+Small R → measurement trusted → K close to 1
+Large R → prediction trusted → K close to 0
+
+2. Color Histogram Mathematics
+HSV Conversion
+Converting from BGR to HSV uses these formulas:
+Let R, G, B ∈ [0,1]
+M = max(R, G, B)
+m = min(R, G, B)
+C = M - m  (chroma)
+
+Hue:
+H = 60 × (G-B)/C      if M = R
+H = 60 × (B-R)/C + 2  if M = G
+H = 60 × (R-G)/C + 4  if M = B
+
+Saturation:
+S = 0      if M = 0
+S = C / M  otherwise
+
+Value:
+V = M
+OpenCV scales H to 0-180, S and V to 0-255.
+3D Histogram Calculation
+8 bins for Hue    (180/8 = 22.5 per bin)
+8 bins for Sat    (256/8 = 32 per bin)
+8 bins for Val    (256/8 = 32 per bin)
+Total = 8×8×8 = 512 bins
+
+hist[h][s][v] = count of pixels where:
+  Hue ∈ [h×22, (h+1)×22]
+  Sat ∈ [s×32, (s+1)×32]
+  Val ∈ [v×32, (v+1)×32]
+Histogram Normalization
+hist_normalized[i] = hist[i] / max(hist)
+
+Result: all values ∈ [0, 1]
+Allows comparison regardless of region size
+Histogram Correlation — Bhattacharyya Distance
+d(H1, H2) = Σ(H1_i - H̄1)(H2_i - H̄2)
+            ────────────────────────────────
+            √[Σ(H1_i - H̄1)² × Σ(H2_i - H̄2)²]
+
+Where:
+H̄1 = mean of histogram H1
+H̄2 = mean of histogram H2
+
+Result ∈ [-1, 1]
+1.0  = identical histograms (same object)
+0.0  = no similarity
+-1.0 = inverse relationship
+
+Threshold in your code: ≥ 0.45 to accept
+
+3. Template Matching Mathematics
+Normalized Cross Correlation
+R(x,y) = 
+  Σ [T(x',y') - T̄] × [F(x+x', y+y') - F̄(x,y)]
+  ──────────────────────────────────────────────────
+  √[Σ(T - T̄)² × Σ(F - F̄)²]
+
+Where:
+T = template image (saved at selection)
+F = current frame being searched
+x,y = position being tested
+T̄ = mean pixel value of template
+F̄ = local mean at position x,y
+
+Result ∈ [-1, 1]
+1.0  = perfect visual match
+0.0  = no match
+-1.0 = inverted match
+
+Threshold in your code: ≥ 0.55 to accept
+
+4. Scale Adaptation Mathematics
+Five Scale Candidates
+Scales S ∈ {0.8, 0.9, 1.0, 1.1, 1.2}
+
+For each scale S:
+  NewW = Box.width  × S
+  NewH = Box.height × S
+  NewX = Box.x + (Box.width  - NewW) / 2
+  NewY = Box.y + (Box.height - NewH) / 2
+
+Score(S) = compareHist(ObjHistogram, ScaledBoxHistogram)
+
+Best = argmax Score(S)
+       S ∈ {0.8, 0.9, 1.0, 1.1, 1.2}
+This finds the scale where the box best matches the original object color.
+
+5. ROI Calculation Mathematics
+Mouse Drag ROI
+Start = (x1, y1)  ← mouse press
+End   = (x2, y2)  ← mouse release
+
+ROI.x      = min(x1, x2)
+ROI.y      = min(y1, y2)
+ROI.width  = |x2 - x1|
+ROI.height = |y2 - y1|
+ROI Clipping to Frame Boundaries
+ROI = ROI ∩ Rectangle(0, 0, frame_width, frame_height)
+
+This uses intersection operation:
+clipped_x = max(ROI.x, 0)
+clipped_y = max(ROI.y, 0)
+clipped_w = min(ROI.x + ROI.width,  frame_width)  - clipped_x
+clipped_h = min(ROI.y + ROI.height, frame_height) - clipped_y
+
+6. CSRT Tracker Mathematics
+Spatial Reliability Map
+W(x,y) = reliability weight of pixel at position (x,y)
+W = 1 for pixels clearly belonging to object
+W = 0 for background pixels inside bounding box
+
+CSRT solves: H = argmin ||IFFT(H* ⊙ FFT(F)) - g||² + λ||H||²
+             weighted by W
+
+Where:
+H = correlation filter
+F = feature map (HOG + color)
+g = desired Gaussian response
+λ = regularization parameter
+⊙ = element-wise multiplication
+Channel Reliability
+For each feature channel c:
+reliability(c) = correlation between channel c response and target
+
+Channel weight w_c = reliability(c) / Σ reliability(k)
+
+Higher weight → channel more useful for this object
+Lower weight  → channel less useful
+
+7. GrabCut Mathematics
+Energy Function Minimization
+E(α) = λ × R(α) + B(α)
+
+Where:
+α = pixel labeling (0=background, 1=foreground)
+λ = balance weight
+
+Regional term:
+R(α) = Σ [-log P(pixel | α=foreground)]
+         + Σ [-log P(pixel | α=background)]
+
+Boundary term:
+B(α) = Σ exp(-β × ||z_m - z_n||²) × [α_m ≠ α_n]
+
+β = (2 × mean ||z_m - z_n||²)^-1
+
+P(pixel | α) = Gaussian Mixture Model of foreground/background
+Iterative optimization runs 3 iterations in your code.
+
+8. Edge Detection Mathematics — Canny
+Gaussian Blur first
+G(x,y) = (1/2πσ²) × exp(-(x²+y²)/2σ²)
+
+σ = 1.5 in your FrameStabilizer
+Kernel size = 5×5
+Gradient Calculation
+Gx = image convolved with Sobel_x kernel:
+[-1  0  1]
+[-2  0  2]
+[-1  0  1]
+
+Gy = image convolved with Sobel_y kernel:
+[-1 -2 -1]
+[ 0  0  0]
+[ 1  2  1]
+
+Magnitude = √(Gx² + Gy²)
+Direction = arctan(Gy / Gx)
+Thresholds in your code:
+Low threshold  = 30
+High threshold = 90
+
+Pixel is edge if Magnitude > 90
+Pixel is weak edge if 30 < Magnitude < 90
+Weak edge kept only if connected to strong edge
+
+9. Optical Flow Mathematics — Frame Stabilizer
+Lucas-Kanade Algorithm
+Assumes: pixel intensity does not change between frames
+I(x, y, t) = I(x+dx, y+dy, t+dt)
+
+Taylor expansion gives:
+Ix×u + Iy×v + It = 0
+
+Where:
+Ix = horizontal gradient
+Iy = vertical gradient
+It = temporal gradient
+u  = horizontal velocity
+v  = vertical velocity
+
+This one equation has two unknowns → underdetermined.
+Solution: use a window of N×N pixels and solve:
+
+[Σ Ix²    Σ Ix×Iy] [u]   [-Σ Ix×It]
+[Σ Ix×Iy  Σ Iy²  ] [v] = [-Σ Iy×It]
+
+A × V = b
+V = A^-1 × b → optical flow velocity at each point
+
+10. Background Subtraction Mathematics — MOG2
+Mixture of Gaussians
+P(x) = Σ(k=1 to K) w_k × N(x; μ_k, σ_k²)
+
+Where:
+K = number of Gaussian components (default 5)
+w_k = weight of kth Gaussian
+μ_k = mean of kth Gaussian
+σ_k = standard deviation of kth Gaussian
+
+Pixel classified as foreground if:
+min_k (x - μ_k)² / σ_k² > variance_threshold
+
+variance_threshold = 16 in your code
+
+Background model updated each frame:
+w_k = (1-α)×w_k + α×match_k
+μ_k = (1-α)×μ_k + α×x
+σ_k² = (1-α)×σ_k² + α×(x-μ_k)²
+
+α = learning rate = 1/history = 1/500 in your code
+
+11. Object Size Validation Mathematics
+Size Ratio Check in IsCorrectObject
+WRatio = candidate.width  / OriginalWidth
+HRatio = candidate.height / OriginalHeight
+
+Accept if: 0.5 ≤ WRatio ≤ 2.0
+      AND  0.5 ≤ HRatio ≤ 2.0
+
+This means object can be at most:
+2x larger  → moved 2x closer to camera
+2x smaller → moved 2x farther from camera
+Jump Distance Check
+Center_old = (Box_old.x + Box_old.w/2,
+              Box_old.y + Box_old.h/2)
+
+Center_new = (Box_new.x + Box_new.w/2,
+              Box_new.y + Box_new.h/2)
+
+Distance = √[(cx_new - cx_old)² + (cy_new - cy_old)²]
+
+Reject if Distance > MAX_JUMP_DISTANCE = 150 pixels
+
+This is the Euclidean distance formula
+
+12. FPS Timing Mathematics — ThreadedCamera
+Target time per frame = 1000 / FPS  milliseconds
+
+Example at 30 FPS:
+Target = 1000 / 30 = 33.33 ms
+
+Elapsed = time camera.read() actually took
+
+Sleep = Target - Elapsed
+
+If Sleep > 0:
+  thread.sleep(Sleep ms)   → correct speed
+If Sleep ≤ 0:
+  no sleep needed         
